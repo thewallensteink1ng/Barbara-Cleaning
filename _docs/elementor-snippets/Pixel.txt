@@ -1,0 +1,11 @@
+<script>
+(function () {
+  if (window.__bcTLInjected) return;
+  window.__bcTLInjected = true;
+
+  var s = document.createElement('script');
+  s.async = true;
+  s.src = '/dashboard/tracking-loader.php?ts=' + Date.now();
+  document.head.appendChild(s);
+})();
+</script>

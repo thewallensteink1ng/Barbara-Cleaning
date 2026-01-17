@@ -1,0 +1,879 @@
+<!-- =========================
+BarbaraCleaning Quote Form
+BC Form Tracking V4 (Meta CAPI + Google Ads conversions + reliability fixes)
+- ViewContent: on form load
+- Lead: on Step 4 -> Step 5 (after validation)
+- Contact: on WhatsApp click (keepalive + sendBeacon)
+- Sends to:
+  • Meta browser events (fbq) with eventID for dedup
+  • Your server endpoints:
+      /dashboard/lead-endpoint.php
+      /dashboard/contact-endpoint.php
+  • Google Ads conversions (gtag) using Conversion ID + Labels from your Google Ads dashboard
+  • Enhanced Conversions (optional): sets user_data (email/phone) right before conversion
+========================= -->
+
+<style>
+  .bc-multi-wrapper {max-width:780px;margin:0 auto 32px;padding:0 12px;box-sizing:border-box;font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;}
+  .bc-step{display:none;}
+  .bc-step.bc-step-active{display:block;}
+
+  .bc-quote-box{width:100%;margin:0 auto 24px;padding:28px 20px 28px;background:#f7faff;border:1px solid #e1e7f0;border-radius:16px;box-sizing:border-box;}
+  .bc-quote-title{margin:0 0 22px;font-size:33px;font-weight:700;line-height:1.2;color:#002842;text-align:center;}
+  .bc-quote-sub{margin:0 0 28px;font-size:17px;line-height:1.7;color:#0d0d0d;text-align:center;}
+  .bc-quote-sub span{font-weight:600;}
+  .bc-quote-steps-label{margin:0 0 16px;font-size:14px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:#6b7280;text-align:left;}
+  .bc-quote-steps{display:flex;flex-direction:column;gap:18px;margin-bottom:26px;}
+  .bc-quote-step{display:flex;align-items:flex-start;gap:12px;}
+  .bc-quote-icon{width:32px;height:32px;flex-shrink:0;}
+  .bc-quote-step-title{margin:0 0 4px;font-size:17px;font-weight:600;color:#002842;}
+  .bc-quote-step-text{margin:0;font-size:15px;line-height:1.7;color:#333;}
+  .bc-quote-cta{margin-top:8px;text-align:center;}
+  .bc-quote-btn{display:inline-block;width:100%;max-width:320px;border:none;cursor:pointer;padding:14px 22px;border-radius:999px;background:#CF0558;color:#fff;font-size:15px;font-weight:700;letter-spacing:.03em;transition:background .15s ease,transform .12s ease,box-shadow .12s ease;}
+  .bc-quote-btn:hover{background:#b1044c;box-shadow:0 8px 18px rgba(0,0,0,.12);transform:translateY(-1px);}
+  .bc-quote-btn:active{transform:translateY(0);box-shadow:none;}
+  .bc-quote-cta-note{margin-top:14px;font-size:13px;line-height:1.6;color:#6b7280;}
+
+  .bc-service-box,.bc-size-box,.bc-contact-box{width:100%;margin:0 auto 24px;padding:26px 20px 24px;background:#fff;border-radius:16px;box-sizing:border-box;border:1px solid #e5e7eb;}
+  .bc-service-title,.bc-size-title,.bc-contact-title{margin:0 0 10px;font-size:23px;font-weight:700;color:#002842;text-align:left;}
+  .bc-service-sub,.bc-size-sub,.bc-contact-sub{margin:0 0 20px;font-size:15px;line-height:1.6;color:#4b5563;}
+  .bc-service-grid{display:grid;grid-template-columns:1fr;gap:12px;margin-bottom:6px;}
+  .bc-service-option{display:block;cursor:pointer;text-decoration:none;}
+  .bc-service-option input[type="radio"]{display:none;}
+  .bc-service-card{border-radius:12px;border:1px solid #e5e7eb;background:#f9fafb;padding:13px;display:flex;align-items:flex-start;gap:10px;transition:border-color .15s ease,background .15s ease,box-shadow .15s ease,transform .12s ease;}
+  .bc-service-radio{width:19px;height:19px;border-radius:999px;border:2px solid #c4c4c4;margin-top:3px;box-sizing:border-box;position:relative;flex-shrink:0;}
+  .bc-service-radio:after{content:"";position:absolute;inset:3px;border-radius:999px;background:#CF0558;opacity:0;transition:opacity .15s ease;}
+  .bc-service-text-wrap{flex:1;}
+  .bc-service-name{margin:0 0 3px;font-size:16px;font-weight:600;color:#111827;}
+  .bc-service-desc{margin:0;font-size:14px;line-height:1.6;color:#4b5563;}
+  .bc-service-option:hover .bc-service-card{border-color:#d1d5db;background:#f3f4f6;transform:translateY(-1px);box-shadow:0 6px 14px rgba(0,0,0,.06);}
+  .bc-service-option input[type="radio"]:checked + .bc-service-card{border-color:#CF0558;background:#fff7fb;box-shadow:0 8px 18px rgba(207,5,88,.12);}
+  .bc-service-option input[type="radio"]:checked + .bc-service-card .bc-service-radio{border-color:#CF0558;}
+  .bc-service-option input[type="radio"]:checked + .bc-service-card .bc-service-radio:after{opacity:1;}
+  .bc-error-text{margin:8px 0 0;font-size:13px;color:#b91c1c;display:none;}
+  .bc-error-text.bc-error-visible{display:block;}
+
+  .bc-size-group{margin-bottom:32px;}
+  .bc-size-label-row{display:flex;align-items:center;gap:8px;margin:0 0 12px;}
+  .bc-size-label-icon{font-size:18px;}
+  .bc-size-label{margin:0;font-size:15px;font-weight:600;color:#111827;}
+  .bc-size-bar{position:relative;width:100%;height:12px;border-radius:999px;background:#e5e7eb;overflow:hidden;}
+  .bc-size-bar-fill{position:absolute;left:0;top:0;bottom:0;width:0%;background:#CF0558;border-radius:999px;transition:width .2s ease;}
+  .bc-size-options{display:flex;justify-content:space-between;align-items:flex-start;margin-top:10px;}
+  .bc-size-option{display:inline-flex;flex-direction:column;align-items:center;gap:4px;cursor:pointer;}
+  .bc-size-option input[type="radio"]{display:none;}
+  .bc-size-option-circle{width:34px;height:34px;border-radius:999px;border:2px solid #d1d5db;background:#fff;display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:700;color:#111827;box-sizing:border-box;transition:background .15s ease,border-color .15s ease,color .15s ease,box-shadow .12s ease,transform .12s ease;}
+  .bc-size-option:hover .bc-size-option-circle{border-color:#9ca3af;background:#f3f4f6;transform:translateY(-1px);box-shadow:0 4px 10px rgba(0,0,0,.05);}
+  .bc-size-option input[type="radio"]:checked + .bc-size-option-circle{background:#CF0558;border-color:#CF0558;color:#fff;box-shadow:0 0 0 3px rgba(207,5,88,.18);transform:translateY(-1px);}
+  .bc-size-error{margin:4px 0 0;font-size:13px;color:#b91c1c;display:none;}
+  .bc-size-error.bc-error-visible{display:block;}
+
+  .bc-field-group{display:flex;flex-direction:column;gap:14px;margin-bottom:6px;}
+  .bc-field{display:flex;flex-direction:column;gap:4px;}
+  .bc-field-label{font-size:14px;font-weight:500;color:#111827;}
+  .bc-field-label span{color:#b91c1c;margin-left:3px;}
+  .bc-field-input{width:100%;border-radius:10px;border:1px solid #d1d5db;padding:10px 12px;font-size:14px;color:#111827;box-sizing:border-box;background:#fff;transition:border-color .15s ease,box-shadow .15s ease;}
+  .bc-field-input:focus{outline:none;border-color:#CF0558;box-shadow:0 0 0 1px rgba(207,5,88,.18);}
+  .bc-field-error{font-size:13px;color:#b91c1c;display:none;}
+  .bc-field-error.bc-error-visible{display:block;}
+
+  .bc-finish-box{width:100%;margin:0 auto 24px;padding:28px 20px 26px;background:#f7faff;border-radius:16px;box-sizing:border-box;border:1px solid #e1e7f0;}
+  .bc-finish-title{margin:0 0 12px;font-size:23px;font-weight:700;color:#002842;text-align:left;}
+  .bc-finish-sub{margin:0 0 16px;font-size:15px;line-height:1.7;color:#374151;}
+  .bc-finish-list{margin:0 0 20px;padding-left:18px;font-size:14px;line-height:1.6;color:#4b5563;}
+  .bc-finish-list li{margin-bottom:4px;}
+  .bc-wa-cta{text-align:center;}
+  .bc-wa-btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;width:100%;max-width:340px;padding:14px 22px;border-radius:999px;background:#25d366;color:#fff;font-size:15px;font-weight:700;letter-spacing:.03em;text-decoration:none;border:none;cursor:pointer;transition:background .15s ease,transform .12s ease,box-shadow .12s ease;}
+  .bc-wa-btn:hover{background:#1ebe5b;box-shadow:0 8px 18px rgba(0,0,0,.12);transform:translateY(-1px);}
+  .bc-wa-btn:active{transform:translateY(0);box-shadow:none;}
+  .bc-finish-note{margin-top:12px;font-size:13px;line-height:1.6;color:#6b7280;text-align:center;}
+
+  .bc-step-nav{display:flex;justify-content:space-between;gap:10px;margin-top:14px;}
+  .bc-nav-secondary,.bc-nav-primary{flex:1;border-radius:999px;padding:12px 18px;font-size:15px;font-weight:600;border:1px solid transparent;cursor:pointer;transition:background .15s ease,color .15s ease,border-color .15s ease,transform .12s ease,box-shadow .12s ease;}
+  .bc-nav-secondary{background:#fff;border-color:#d1d5db;color:#374151;}
+  .bc-nav-secondary:hover{background:#f3f4f6;border-color:#9ca3af;transform:translateY(-1px);box-shadow:0 4px 10px rgba(0,0,0,.06);}
+  .bc-nav-primary{background:#CF0558;color:#fff;border-color:#CF0558;}
+  .bc-nav-primary:hover{background:#b1044c;border-color:#b1044c;transform:translateY(-1px);box-shadow:0 6px 14px rgba(0,0,0,.10);}
+  .bc-nav-primary:active,.bc-nav-secondary:active{transform:translateY(0);box-shadow:none;}
+
+  @media (min-width:600px){
+    .bc-quote-box{padding:30px 26px 30px;}
+    .bc-quote-title{font-size:35px;}
+    .bc-quote-sub{font-size:18px;max-width:560px;margin:0 auto 30px;}
+    .bc-quote-steps{flex-direction:row;flex-wrap:wrap;gap:20px 24px;}
+    .bc-quote-step{flex:1 1 230px;}
+    .bc-service-box,.bc-size-box,.bc-contact-box,.bc-finish-box{padding:26px 26px 24px;}
+    .bc-service-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;}
+  }
+  @media (min-width:1024px){
+    .bc-quote-box{padding:32px 32px 30px;}
+    .bc-quote-title{font-size:36px;}
+    .bc-quote-sub{font-size:18px;}
+    .bc-service-title,.bc-size-title,.bc-contact-title,.bc-finish-title{font-size:24px;}
+    .bc-service-sub,.bc-size-sub,.bc-contact-sub,.bc-finish-sub{font-size:15px;}
+    .bc-service-name{font-size:16px;}
+    .bc-service-desc,.bc-finish-list{font-size:14px;}
+  }
+</style>
+
+<div class="bc-multi-wrapper">
+  <div class="bc-step bc-step-active" data-step="1">
+    <div class="bc-quote-box">
+      <h2 class="bc-quote-title">Get your free home cleaning quote</h2>
+
+      <p class="bc-quote-sub">
+        Just answer a few quick questions about your home and we will
+        <span>finish your booking together on WhatsApp</span>.
+        No payment now. You only pay after the cleaner finishes the job.
+      </p>
+
+      <p class="bc-quote-steps-label">3 Simple Steps:</p>
+
+      <div class="bc-quote-steps">
+        <div class="bc-quote-step">
+          <svg class="bc-quote-icon" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg">
+            <circle cx="16" cy="16" r="15" fill="#CF0558"/>
+            <text x="16" y="21" text-anchor="middle" font-size="16" font-family="Arial" fill="#ffffff">1</text>
+          </svg>
+          <div>
+            <p class="bc-quote-step-title">Tell us about your home</p>
+            <p class="bc-quote-step-text">How many bedrooms, bathrooms and which areas you want us to clean.</p>
+          </div>
+        </div>
+
+        <div class="bc-quote-step">
+          <svg class="bc-quote-icon" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg">
+            <circle cx="16" cy="16" r="15" fill="#CF0558"/>
+            <text x="16" y="21" text-anchor="middle" font-size="16" font-family="Arial" fill="#ffffff">2</text>
+          </svg>
+          <div>
+            <p class="bc-quote-step-title">Choose your cleaning</p>
+            <p class="bc-quote-step-text">Regular, deep, end of tenancy and add-ons like carpets, oven or windows.</p>
+          </div>
+        </div>
+
+        <div class="bc-quote-step">
+          <svg class="bc-quote-icon" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg">
+            <circle cx="16" cy="16" r="15" fill="#CF0558"/>
+            <path d="M13.5 20.5L9.5 16.5L10.9 15.1L13.5 17.7L21.1 10.1L22.5 11.5L13.5 20.5Z" fill="#ffffff"/>
+          </svg>
+          <div>
+            <p class="bc-quote-step-title">Confirm everything on WhatsApp</p>
+            <p class="bc-quote-step-text">We send your quote, answer questions and lock in the date with you on WhatsApp.</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="bc-quote-cta">
+        <button type="button" class="bc-quote-btn" data-goto-step="2">Start my quote</button>
+        <p class="bc-quote-cta-note">No card required. We only use your details to contact you about this booking.</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="bc-step" data-step="2">
+    <div class="bc-service-box">
+      <h3 class="bc-service-title">What type of cleaning do you need?</h3>
+      <p class="bc-service-sub">Choose the option that best matches your situation. You can always explain more in the next Steps or on WhatsApp.</p>
+
+      <div class="bc-service-grid">
+        <label class="bc-service-option">
+          <input type="radio" name="service_type" value="deep_cleaning">
+          <div class="bc-service-card">
+            <div class="bc-service-radio"></div>
+            <div class="bc-service-text-wrap">
+              <p class="bc-service-name">Deep Cleaning</p>
+              <p class="bc-service-desc">Full detailed cleaning for when the house needs extra attention in every room.</p>
+            </div>
+          </div>
+        </label>
+
+        <label class="bc-service-option">
+          <input type="radio" name="service_type" value="maintenance_cleaning">
+          <div class="bc-service-card">
+            <div class="bc-service-radio"></div>
+            <div class="bc-service-text-wrap">
+              <p class="bc-service-name">Maintenance Cleaning</p>
+              <p class="bc-service-desc">Regular cleaning to keep your home fresh, tidy and under control every week or month.</p>
+            </div>
+          </div>
+        </label>
+
+        <label class="bc-service-option">
+          <input type="radio" name="service_type" value="post_construction">
+          <div class="bc-service-card">
+            <div class="bc-service-radio"></div>
+            <div class="bc-service-text-wrap">
+              <p class="bc-service-name">Post construction Cleaning</p>
+              <p class="bc-service-desc">After renovation or building work, removing dust, paint marks and fine dirt.</p>
+            </div>
+          </div>
+        </label>
+
+        <label class="bc-service-option">
+          <input type="radio" name="service_type" value="move_in_move_out">
+          <div class="bc-service-card">
+            <div class="bc-service-radio"></div>
+            <div class="bc-service-text-wrap">
+              <p class="bc-service-name">Move in / Move out Cleaning</p>
+              <p class="bc-service-desc">Ideal for the start or end of a tenancy, when the house must be spotless.</p>
+            </div>
+          </div>
+        </label>
+
+        <label class="bc-service-option">
+          <input type="radio" name="service_type" value="not_sure_help_me">
+          <div class="bc-service-card">
+            <div class="bc-service-radio"></div>
+            <div class="bc-service-text-wrap">
+              <p class="bc-service-name">Not sure / Help me choose</p>
+              <p class="bc-service-desc">Tell us a bit about the house and we will suggest the best option for you.</p>
+            </div>
+          </div>
+        </label>
+      </div>
+
+      <p class="bc-error-text" id="bc-service-error">Please choose the type of cleaning before continuing.</p>
+
+      <div class="bc-step-nav">
+        <button type="button" class="bc-nav-secondary" data-goto-step="1">Back</button>
+        <button type="button" class="bc-nav-primary" data-goto-step="3">Next Step</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="bc-step" data-step="3">
+    <div class="bc-size-box">
+      <h3 class="bc-size-title">How big is your home?</h3>
+      <p class="bc-size-sub">This helps us estimate the time and the team size we need for your clean.</p>
+
+      <div class="bc-size-group">
+        <div class="bc-size-label-row">
+          <span class="bc-size-label-icon">🛏️</span>
+          <p class="bc-size-label">Bedrooms</p>
+        </div>
+
+        <div class="bc-size-scale" data-size-group="bedrooms">
+          <div class="bc-size-bar"><div class="bc-size-bar-fill"></div></div>
+          <div class="bc-size-options">
+            <label class="bc-size-option"><input type="radio" name="bedrooms" value="1"><span class="bc-size-option-circle">1</span></label>
+            <label class="bc-size-option"><input type="radio" name="bedrooms" value="2"><span class="bc-size-option-circle">2</span></label>
+            <label class="bc-size-option"><input type="radio" name="bedrooms" value="3"><span class="bc-size-option-circle">3</span></label>
+            <label class="bc-size-option"><input type="radio" name="bedrooms" value="4"><span class="bc-size-option-circle">4</span></label>
+            <label class="bc-size-option"><input type="radio" name="bedrooms" value="5_plus"><span class="bc-size-option-circle">5+</span></label>
+          </div>
+        </div>
+      </div>
+
+      <div class="bc-size-group">
+        <div class="bc-size-label-row">
+          <span class="bc-size-label-icon">🚿</span>
+          <p class="bc-size-label">Bathrooms</p>
+        </div>
+
+        <div class="bc-size-scale" data-size-group="bathrooms">
+          <div class="bc-size-bar"><div class="bc-size-bar-fill"></div></div>
+          <div class="bc-size-options">
+            <label class="bc-size-option"><input type="radio" name="bathrooms" value="1"><span class="bc-size-option-circle">1</span></label>
+            <label class="bc-size-option"><input type="radio" name="bathrooms" value="2"><span class="bc-size-option-circle">2</span></label>
+            <label class="bc-size-option"><input type="radio" name="bathrooms" value="3"><span class="bc-size-option-circle">3</span></label>
+            <label class="bc-size-option"><input type="radio" name="bathrooms" value="4"><span class="bc-size-option-circle">4</span></label>
+            <label class="bc-size-option"><input type="radio" name="bathrooms" value="5_plus"><span class="bc-size-option-circle">5+</span></label>
+          </div>
+        </div>
+      </div>
+
+      <p class="bc-size-error" id="bc-size-error">Please choose the number of bedrooms and bathrooms before continuing.</p>
+
+      <div class="bc-step-nav">
+        <button type="button" class="bc-nav-secondary" data-goto-step="2">Back</button>
+        <button type="button" class="bc-nav-primary" data-goto-step="4">Next Step</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="bc-step" data-step="4">
+    <div class="bc-contact-box">
+      <h3 class="bc-contact-title">Your details</h3>
+      <p class="bc-contact-sub">We use your details only to send your quote and confirm your booking. Response is by WhatsApp or phone.</p>
+
+      <div class="bc-field-group">
+        <div class="bc-field">
+          <label class="bc-field-label" for="bc-name">Full name<span>*</span></label>
+          <input id="bc-name" type="text" class="bc-field-input" autocomplete="name"/>
+          <span class="bc-field-error" id="bc-name-error">Please enter your name.</span>
+        </div>
+
+        <div class="bc-field">
+          <label class="bc-field-label" for="bc-phone">Phone / WhatsApp number<span>*</span></label>
+          <input id="bc-phone" type="tel" class="bc-field-input" autocomplete="tel"/>
+          <span class="bc-field-error" id="bc-phone-error">Please enter a valid Irish phone number (e.g. 087 123 4567, 87 123 4567 or +353 87 123 4567).</span>
+        </div>
+
+        <div class="bc-field">
+          <label class="bc-field-label" for="bc-email">Email<span>*</span></label>
+          <input id="bc-email" type="email" class="bc-field-input" autocomplete="email"/>
+          <span class="bc-field-error" id="bc-email-error">Please enter a valid email address.</span>
+        </div>
+      </div>
+
+      <div class="bc-step-nav">
+        <button type="button" class="bc-nav-secondary" data-goto-step="3">Back</button>
+        <button type="button" class="bc-nav-primary" data-goto-step="5">Last Step</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="bc-step" data-step="5">
+    <div class="bc-finish-box">
+      <h3 class="bc-finish-title">Last Step: send us a message on WhatsApp</h3>
+      <p class="bc-finish-sub">Based on your answers we will prepare a personalised quote for your home and confirm the best date and time for you.</p>
+
+      <ul class="bc-finish-list">
+        <li>We reply immediately on WhatsApp during the day.</li>
+        <li>You can send photos if you want a more accurate quote.</li>
+        <li>You pay only after the cleaner finishes the job.</li>
+      </ul>
+
+      <div class="bc-wa-cta">
+        <a class="bc-wa-btn"
+          href="https://wa.me/353872167865?text=Hi%2C%20I%20just%20filled%20in%20the%20cleaning%20quote%20form%20on%20the%20website."
+          target="_blank" rel="noopener">
+          Chat on WhatsApp
+        </a>
+
+        <p class="bc-finish-note">
+          If the button does not open WhatsApp automatically, you can save this number and send us a message:
+          <strong>+353 87 216 7865</strong>.
+        </p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+/* =====================================================
+   BC Form Tracking V4
+   - Meta: ViewContent / Lead / Contact (fbq + CAPI via your endpoints)
+   - Google Ads: Lead / Contact conversions (gtag + labels)
+   - Reliability: keepalive + sendBeacon on WhatsApp click
+   - Debug: add ?bc_debug=1 to URL to see logs
+   ===================================================== */
+(function () {
+  "use strict";
+
+  // ======= CONFIG =======
+  var LEAD_ENDPOINT = "/dashboard/lead-endpoint.php";
+  var CONTACT_ENDPOINT = "/dashboard/contact-endpoint.php";
+
+  // ======= STATE =======
+  var leadSent = false;
+  var contactSent = false;
+  var currentLeadId = null;
+  var formStartTime = Date.now();
+  var currentStep = 1;
+
+  // ======= HELPERS =======
+  function getQueryParam(name) {
+    try { return (new URLSearchParams(window.location.search)).get(name) || ""; }
+    catch (e) { return ""; }
+  }
+
+  var DEBUG = getQueryParam("bc_debug") === "1";
+  function log() { if (DEBUG) { try { console.log.apply(console, arguments); } catch (e) {} } }
+
+  function generateEventId(prefix) {
+    return prefix + "_" + Date.now() + "_" + Math.random().toString(36).substr(2, 9);
+  }
+
+  function once(key) {
+    try {
+      var k = location.pathname + "::" + key;
+      if (sessionStorage.getItem(k) === "1") return false;
+      sessionStorage.setItem(k, "1");
+    } catch (e) {}
+    return true;
+  }
+
+  function setCookie(name, value, days) {
+    try {
+      var d = new Date();
+      d.setTime(d.getTime() + (days * 24 * 60 * 60 * 1000));
+      var expires = "expires=" + d.toUTCString();
+      var secure = location.protocol === "https:" ? "; Secure" : "";
+      document.cookie = name + "=" + encodeURIComponent(value) + "; " + expires + "; path=/; SameSite=Lax" + secure;
+    } catch (e) {}
+  }
+
+  function getCookie(name) {
+    try {
+      var match = document.cookie.match(new RegExp("(^|;\\s*)" + name + "=([^;]*)"));
+      return match ? decodeURIComponent(match[2]) : "";
+    } catch (e) { return ""; }
+  }
+
+  function ensureFbpFbc() {
+    var now = Math.floor(Date.now() / 1000);
+
+    var fbp = getCookie("_fbp");
+    if (!fbp) {
+      var rand = Math.floor(Math.random() * 1e10);
+      fbp = "fb.1." + now + "." + rand;
+      setCookie("_fbp", fbp, 90);
+    }
+
+    var fbc = getCookie("_fbc");
+    var fbclid = getQueryParam("fbclid");
+    if (!fbc && fbclid) {
+      fbc = "fb.1." + now + "." + fbclid;
+      setCookie("_fbc", fbc, 90);
+    }
+
+    return { fbp: fbp || "", fbc: fbc || "", fbclid: fbclid || "" };
+  }
+
+  // ======= FBQ SAFE (queue until fbq exists) =======
+  window.__bcFbqQ = window.__bcFbqQ || [];
+  function fbqSafe() {
+    var args = Array.prototype.slice.call(arguments);
+    if (typeof window.fbq === "function") {
+      try { window.fbq.apply(null, args); } catch (e) {}
+      return;
+    }
+    window.__bcFbqQ.push(args);
+  }
+
+  function flushFbqQueue() {
+    if (typeof window.fbq !== "function") return;
+    var q = window.__bcFbqQ || [];
+    if (!q.length) return;
+    window.__bcFbqQ = [];
+    q.forEach(function (args) {
+      try { window.fbq.apply(null, args); } catch (e) {}
+    });
+  }
+
+  var tries = 0;
+  var t = setInterval(function () {
+    tries++;
+    flushFbqQueue();
+    if (tries >= 40 || typeof window.fbq === "function") clearInterval(t);
+  }, 250);
+
+  // ======= GOOGLE ADS (gtag) =======
+  // Your tracking-loader.php should set window.bcGoogleAds like:
+  // window.bcGoogleAds = { conversionId:'AW-XXXX', leadLabel:'...', contactLabel:'...', scheduleLabel:'...' }
+  function googleSetUserData(data) {
+    if (typeof window.gtag !== "function") return;
+    // Enhanced Conversions: email/phone (gtag will hash automatically if configured)
+    try {
+      window.gtag("set", "user_data", {
+        email: data.email || undefined,
+        phone_number: data.phone_e164 || data.phone || undefined
+      });
+    } catch (e) {}
+  }
+
+  function googleConversion(kind) {
+    if (typeof window.gtag !== "function") { log("[GA] gtag missing"); return; }
+    if (!window.bcGoogleAds || !window.bcGoogleAds.conversionId) { log("[GA] bcGoogleAds missing"); return; }
+
+    var label = "";
+    if (kind === "lead") label = window.bcGoogleAds.leadLabel || "";
+    if (kind === "contact") label = window.bcGoogleAds.contactLabel || "";
+    if (kind === "schedule") label = window.bcGoogleAds.scheduleLabel || "";
+    if (!label) { log("[GA] label missing for:", kind); return; }
+
+    var sendTo = window.bcGoogleAds.conversionId + "/" + label;
+
+    try {
+      window.gtag("event", "conversion", {
+        send_to: sendTo,
+        value: 1.0,
+        currency: "EUR"
+      });
+      log("[GA] conversion fired:", kind, sendTo);
+    } catch (e) {
+      log("[GA] conversion error:", e);
+    }
+  }
+
+  // ======= POST HELPERS (keepalive + beacon) =======
+  function postJSON(url, payload, opts) {
+    opts = opts || {};
+    var keepalive = !!opts.keepalive;
+
+    // Prefer sendBeacon when we're about to navigate (WhatsApp opens)
+    if (opts.useBeacon && navigator.sendBeacon) {
+      try {
+        var blob = new Blob([JSON.stringify(payload)], { type: "application/json" });
+        var ok = navigator.sendBeacon(url, blob);
+        if (ok) return Promise.resolve({ ok: true, via: "beacon" });
+      } catch (e) {}
+    }
+
+    return fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+      credentials: "same-origin",
+      keepalive: keepalive
+    }).then(function (r) {
+      return r.text().then(function (txt) {
+        var json = null;
+        try { json = JSON.parse(txt); } catch (e) {}
+        return { status: r.status, json: json, text: txt };
+      });
+    });
+  }
+
+  // ======= VALIDATION =======
+  function normalizeIrishPhone(raw) {
+    raw = (raw || "").trim();
+    if (!raw) return null;
+
+    var digits = raw.replace(/\D+/g, "");
+    if (!digits) return null;
+
+    if (digits.indexOf("00") === 0) digits = digits.slice(2);
+
+    function isMobileNo0(nsn) { return /^8[3-9]\d{7}$/.test(nsn); }
+    function isMobileWith0(nsn) { return /^08[3-9]\d{7}$/.test(nsn); }
+    function isDublinWith0(nsn) { return /^01\d{7}$/.test(nsn); }
+    function isDublinNo0(nsn) { return /^1\d{7}$/.test(nsn); }
+    function isOtherWith0(nsn) { return /^0[2-9]\d{7,8}$/.test(nsn); }
+    function isOtherNo0(nsn) { return /^[2-9]\d{7,8}$/.test(nsn); }
+
+    if (digits.indexOf("353") === 0) {
+      var rest = digits.slice(3);
+      if (isMobileNo0(rest) || isDublinNo0(rest) || isOtherNo0(rest)) {
+        return { digits: "353" + rest, e164: "+353" + rest };
+      }
+      return null;
+    }
+
+    if (digits[0] === "0") {
+      if (isMobileWith0(digits) || isDublinWith0(digits) || isOtherWith0(digits)) {
+        return { digits: "353" + digits.slice(1), e164: "+353" + digits.slice(1) };
+      }
+      return null;
+    }
+
+    if (isMobileNo0(digits) || isDublinNo0(digits) || isOtherNo0(digits)) {
+      return { digits: "353" + digits, e164: "+353" + digits };
+    }
+
+    return null;
+  }
+
+  function validateServiceStep(wrapper) {
+    var errorEl = document.getElementById("bc-service-error");
+    var selected = wrapper.querySelector('input[name="service_type"]:checked');
+    if (!selected) { if (errorEl) errorEl.classList.add("bc-error-visible"); return false; }
+    if (errorEl) errorEl.classList.remove("bc-error-visible");
+    return true;
+  }
+
+  function validateSizeStep(wrapper) {
+    var errorEl = document.getElementById("bc-size-error");
+    var bed = wrapper.querySelector('input[name="bedrooms"]:checked');
+    var bath = wrapper.querySelector('input[name="bathrooms"]:checked');
+    if (!bed || !bath) { if (errorEl) errorEl.classList.add("bc-error-visible"); return false; }
+    if (errorEl) errorEl.classList.remove("bc-error-visible");
+    return true;
+  }
+
+  function validateContactStep() {
+    var nameInput = document.getElementById("bc-name");
+    var phoneInput = document.getElementById("bc-phone");
+    var emailInput = document.getElementById("bc-email");
+
+    var nameError = document.getElementById("bc-name-error");
+    var phoneError = document.getElementById("bc-phone-error");
+    var emailError = document.getElementById("bc-email-error");
+
+    var ok = true;
+
+    if (!nameInput.value.trim()) { if (nameError) nameError.classList.add("bc-error-visible"); ok = false; }
+    else { if (nameError) nameError.classList.remove("bc-error-visible"); }
+
+    var phoneNorm = normalizeIrishPhone(phoneInput.value);
+    if (!phoneNorm) { if (phoneError) phoneError.classList.add("bc-error-visible"); ok = false; }
+    else { if (phoneError) phoneError.classList.remove("bc-error-visible"); }
+
+    var emailVal = emailInput.value.trim();
+    var emailValid = !!emailVal && emailVal.includes("@") && emailVal.includes(".");
+    if (!emailValid) { if (emailError) emailError.classList.add("bc-error-visible"); ok = false; }
+    else { if (emailError) emailError.classList.remove("bc-error-visible"); }
+
+    return ok;
+  }
+
+  function getSelectedValue(wrapper, name) {
+    var el = wrapper.querySelector('input[name="' + name + '"]:checked');
+    return el ? el.value : "";
+  }
+
+  // ======= DATA COLLECTION =======
+  function collectFormData(wrapper) {
+    var name = (document.getElementById("bc-name").value || "").trim();
+    var email = (document.getElementById("bc-email").value || "").trim();
+    var phoneRaw = (document.getElementById("bc-phone").value || "").trim();
+
+    var phoneNorm = normalizeIrishPhone(phoneRaw);
+    var phoneDigits = phoneNorm ? phoneNorm.digits : phoneRaw.replace(/\D+/g, "");
+    var phoneE164 = phoneNorm ? phoneNorm.e164 : phoneRaw;
+
+    return {
+      name: name,
+      email: email,
+      phone: phoneE164,
+      phone_digits: phoneDigits,
+      phone_e164: phoneE164,
+      service_type: getSelectedValue(wrapper, "service_type"),
+      bedrooms: getSelectedValue(wrapper, "bedrooms"),
+      bathrooms: getSelectedValue(wrapper, "bathrooms"),
+      country: "IE"
+    };
+  }
+
+  function collectMetaData() {
+    var cookies = ensureFbpFbc();
+    return {
+      page_url: window.location.href,
+      referrer: document.referrer || "",
+      user_agent: navigator.userAgent || "",
+      language: navigator.language || navigator.userLanguage || "",
+      timezone_offset: new Date().getTimezoneOffset(),
+      screen_width: window.screen && window.screen.width ? window.screen.width : null,
+      screen_height: window.screen && window.screen.height ? window.screen.height : null,
+
+      fbclid: cookies.fbclid,
+      fbp: cookies.fbp,
+      fbc: cookies.fbc,
+
+      gclid: getQueryParam("gclid"),
+      gbraid: getQueryParam("gbraid"),
+      wbraid: getQueryParam("wbraid"),
+
+      utm_source: getQueryParam("utm_source"),
+      utm_medium: getQueryParam("utm_medium"),
+      utm_campaign: getQueryParam("utm_campaign"),
+      utm_content: getQueryParam("utm_content"),
+      utm_term: getQueryParam("utm_term"),
+
+      time_on_form: Math.round((Date.now() - formStartTime) / 1000),
+      steps_completed: currentStep,
+
+      test_event_code: getQueryParam("test_event_code") || "" // Meta Test Events (optional)
+    };
+  }
+
+  // ======= STEPS =======
+  var wrapper = document.querySelector(".bc-multi-wrapper");
+  if (!wrapper) return;
+
+  var steps = wrapper.querySelectorAll(".bc-step");
+
+  function showStep(stepNumber) {
+    var target = wrapper.querySelector('.bc-step[data-step="' + stepNumber + '"]');
+    if (!target) return;
+
+    steps.forEach(function (step) { step.classList.remove("bc-step-active"); });
+    target.classList.add("bc-step-active");
+    currentStep = stepNumber;
+
+    var top = wrapper.offsetTop || 0;
+    window.scrollTo({ top: top - 60, behavior: "smooth" });
+  }
+
+  // ======= DASHBOARD / CAPI EVENTS =======
+  function persistLeadId(id) {
+    currentLeadId = id || null;
+    try { sessionStorage.setItem(location.pathname + "::bc_last_lead_id", String(id || "")); } catch (e) {}
+  }
+  function loadLeadId() {
+    if (currentLeadId) return currentLeadId;
+    try {
+      var v = sessionStorage.getItem(location.pathname + "::bc_last_lead_id");
+      if (v) currentLeadId = v;
+    } catch (e) {}
+    return currentLeadId;
+  }
+
+  function trackLead() {
+    if (leadSent) return;
+    leadSent = true;
+
+    var data = collectFormData(wrapper);
+    var meta = collectMetaData();
+    var eventId = generateEventId("lead");
+
+    // Meta browser event
+    fbqSafe("track", "Lead", {
+      content_name: "Cleaning Quote Completed",
+      content_category: data.service_type || "cleaning",
+      service_type: data.service_type || "",
+      bedrooms: data.bedrooms || "",
+      bathrooms: data.bathrooms || "",
+      currency: "EUR"
+    }, { eventID: eventId });
+
+    // Google Ads: Enhanced conversions + Lead conversion
+    googleSetUserData(data);
+    googleConversion("lead");
+
+    // Server: save lead + CAPI
+    if (!LEAD_ENDPOINT) return;
+    var payload = {
+      source: "cleaning_quote_form",
+      timestamp: new Date().toISOString(),
+      event_id: eventId,
+      data: data,
+      meta: meta
+    };
+
+    log("[BC Lead] sending...", payload);
+
+    postJSON(LEAD_ENDPOINT, payload, { keepalive: false })
+      .then(function (res) {
+        log("[BC Lead] response:", res);
+        if (res && res.json && res.json.ok && res.json.id) {
+          persistLeadId(res.json.id);
+        }
+      })
+      .catch(function (err) {
+        log("[BC Lead] error:", err);
+      });
+  }
+
+  function trackContact() {
+    if (contactSent) return;
+    contactSent = true;
+
+    var data = collectFormData(wrapper);
+    var meta = collectMetaData();
+    var eventId = generateEventId("contact");
+
+    // Meta browser event
+    fbqSafe("track", "Contact", {
+      content_name: "WhatsApp Click",
+      service_type: data.service_type || "",
+      currency: "EUR"
+    }, { eventID: eventId });
+
+    // Google Ads: Enhanced conversions + Contact conversion
+    googleSetUserData(data);
+    googleConversion("contact");
+
+    // Server: contact + CAPI (useBeacon + keepalive)
+    if (!CONTACT_ENDPOINT) return;
+
+    var payload = {
+      lead_id: loadLeadId(), // may be null if lead endpoint failed
+      event_id: eventId,
+      name: data.name,
+      email: data.email,
+      phone: data.phone_e164 || data.phone,
+      phone_digits: data.phone_digits,
+      service_type: data.service_type,
+      fbp: meta.fbp,
+      fbc: meta.fbc,
+      fbclid: meta.fbclid,
+      page_url: meta.page_url,
+      user_agent: meta.user_agent,
+      test_event_code: meta.test_event_code || ""
+    };
+
+    log("[BC Contact] sending...", payload);
+
+    postJSON(CONTACT_ENDPOINT, payload, { keepalive: true, useBeacon: true })
+      .then(function (res) {
+        log("[BC Contact] response:", res);
+      })
+      .catch(function (err) {
+        log("[BC Contact] error:", err);
+      });
+  }
+
+  // ======= CLICK HANDLERS =======
+  document.addEventListener("click", function (e) {
+    var btn = e.target.closest("[data-goto-step]");
+    if (!btn) return;
+
+    var targetStep = parseInt(btn.getAttribute("data-goto-step"), 10);
+    if (!targetStep) return;
+
+    var currentStepEl = wrapper.querySelector(".bc-step.bc-step-active");
+    var fromStep = currentStepEl ? parseInt(currentStepEl.getAttribute("data-step"), 10) : null;
+
+    if (fromStep === 2 && targetStep > 2) { if (!validateServiceStep(wrapper)) return; }
+    if (fromStep === 3 && targetStep > 3) { if (!validateSizeStep(wrapper)) return; }
+
+    // Step 1 -> 2 (optional)
+    if (fromStep === 1 && targetStep === 2) {
+      if (once("bc_initiate_checkout")) {
+        fbqSafe("track", "InitiateCheckout", {
+          content_name: "Quote Form Start",
+          content_category: "cleaning",
+          currency: "EUR"
+        }, { eventID: generateEventId("checkout") });
+      }
+    }
+
+    // Step 4 -> 5 (Lead)
+    if (fromStep === 4 && targetStep > 4) {
+      if (!validateContactStep()) return;
+      trackLead();
+    }
+
+    showStep(targetStep);
+  });
+
+  // WhatsApp click = Contact
+  document.addEventListener("click", function (e) {
+    var wa = e.target.closest(".bc-wa-btn");
+    if (!wa) return;
+    if (!once("bc_contact_sent")) return;
+    trackContact();
+  });
+
+  // ======= SLIDER INIT =======
+  function initSizeScales() {
+    var scales = wrapper.querySelectorAll(".bc-size-scale");
+    scales.forEach(function (scale) {
+      var barFill = scale.querySelector(".bc-size-bar-fill");
+      var inputs = scale.querySelectorAll('input[type="radio"]');
+      if (!barFill || !inputs.length) return;
+
+      var percentMap = [12, 32, 56, 80, 100];
+
+      function setFromChecked() {
+        var activeIndex = -1;
+        inputs.forEach(function (input, i) { if (input.checked) activeIndex = i; });
+        barFill.style.width = activeIndex < 0 ? "0%" : ((percentMap[activeIndex] || 0) + "%");
+      }
+
+      inputs.forEach(function (input, index) {
+        input.addEventListener("change", function () {
+          barFill.style.width = (percentMap[index] || 0) + "%";
+        });
+      });
+
+      setFromChecked();
+    });
+  }
+  initSizeScales();
+
+  // ======= INITIAL EVENT: ViewContent =======
+  if (once("bc_quote_viewcontent")) {
+    fbqSafe("track", "ViewContent", {
+      content_name: "Cleaning Quote Form",
+      content_category: "cleaning",
+      currency: "EUR"
+    }, { eventID: generateEventId("viewcontent") });
+  }
+
+  log("[BC Form V4] initialized");
+})();
+</script>

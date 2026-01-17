@@ -1,0 +1,9 @@
+Add this BEFORE the "# BEGIN WordPress" block (file: public_html/.htaccess):
+
+<IfModule mod_rewrite.c>
+RewriteEngine On
+
+# Let real files/folders inside /dashboard work normally
+RewriteCond %{REQUEST_URI} ^/dashboard/ [NC]
+RewriteRule .* - [L]
+</IfModule>

@@ -1,0 +1,47 @@
+<script>
+(function () {
+  if (window.__bcFormStartBound) return;
+  window.__bcFormStartBound = true;
+
+  function once(key) {
+    try {
+      if (sessionStorage.getItem(key) === "1") return false;
+      sessionStorage.setItem(key, "1");
+    } catch (e) {}
+    return true;
+  }
+
+  // fila pro fbq (não perde clique antes do pixel carregar)
+  function bcFbq() {
+    var args = Array.prototype.slice.call(arguments);
+    if (typeof window.fbq === "function") {
+      try { window.fbq.apply(null, args); } catch (e) {}
+      return;
+    }
+    window.__bcFbqQueue = window.__bcFbqQueue || [];
+    window.__bcFbqQueue.push(args);
+  }
+
+  document.addEventListener("click", function (e) {
+    var el = e.target.closest('a[href*="/quote"], .bc-go-quote');
+    if (!el) return;
+
+    // evita disparar se já está na página /quote
+    var path = (location.pathname || "").toLowerCase();
+    if (path.indexOf("/quote") !== -1) return;
+
+    if (!once("bc_form_start")) return;
+
+    // Facebook: InitiateCheckout
+    bcFbq("track", "InitiateCheckout", { content_name: "Quote Form Start" });
+
+    // Google Ads: (opcional) se quiser marcar "start form" como conversão também
+    // Se você NÃO quer conversão aqui, deixa comentado.
+    // if (window.bcGoogleAds && window.bcGoogleAds.conversionId && window.bcGoogleAds.leadLabel && typeof window.gtag === "function") {
+    //   var sendTo = window.bcGoogleAds.conversionId + "/" + window.bcGoogleAds.leadLabel;
+    //   try { window.gtag('event', 'conversion', { send_to: sendTo }); } catch (e) {}
+    // }
+
+  }, true);
+})();
+</script>
