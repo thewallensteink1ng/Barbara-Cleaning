@@ -3,6 +3,13 @@ declare(strict_types=1);
 
 header('Content-Type: application/json; charset=utf-8');
 
+if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
+  header('Access-Control-Allow-Origin: *');
+  header('Access-Control-Allow-Headers: Content-Type');
+  header('Access-Control-Allow-Methods: POST, OPTIONS');
+  exit;
+}
+
 $dbcfg = __DIR__ . '/_private/db-config.php';
 if (!is_file($dbcfg)) $dbcfg = __DIR__ . '/db-config.php';
 require_once $dbcfg;
@@ -16,110 +23,157 @@ function json_out(array $a, int $code=200): void {
   exit;
 }
 
-function col_exists(PDO $pdo, string $table, string $col): bool {
-  static $cache = [];
-  $k = $table.'.'.$col;
-  if (isset($cache[$k])) return $cache[$k];
-  try {
-    // Prefer INFORMATION_SCHEMA (reliable on Hostinger/MariaDB)
-    $st = $pdo->prepare("\n      SELECT 1\n      FROM INFORMATION_SCHEMA.COLUMNS\n      WHERE TABLE_SCHEMA = DATABASE()\n        AND TABLE_NAME = :t\n        AND COLUMN_NAME = :c\n      LIMIT 1\n    ");
-    $st->execute([':t' => $table, ':c' => $col]);
-    $cache[$k] = (bool)$st->fetchColumn();
-  } catch (Throwable $e) {
-    // Fallback (avoid prepared statements for SHOW COLUMNS)
-    if (preg_match('/^[A-Za-z0-9_]+$/', $table) && preg_match('/^[A-Za-z0-9_]+$/', $col)) {
-      try {
-        $sql = "SHOW COLUMNS FROM `{$table}` LIKE " . $pdo->quote($col);
-        $r = $pdo->query($sql);
-        $cache[$k] = (bool)$r->fetch(PDO::FETCH_ASSOC);
-      } catch (Throwable $e2) {
-        $cache[$k] = false;
-      }
-    } else {
-      $cache[$k] = false;
+function read_payload(): array {
+  $raw = (string)file_get_contents('php://input');
+  $raw = trim($raw);
+
+  if ($raw !== '') {
+    $j = json_decode($raw, true);
+    if (is_array($j)) return $j;
+
+    parse_str($raw, $out);
+    if (isset($out['payload'])) {
+      $j2 = json_decode((string)$out['payload'], true);
+      if (is_array($j2)) return $j2;
     }
   }
+
+  if (!empty($_POST) && is_array($_POST)) {
+    if (isset($_POST['payload'])) {
+      $j = json_decode((string)$_POST['payload'], true);
+      if (is_array($j)) return $j;
+    }
+    return $_POST;
+  }
+
+  return [];
+}
+
+function col_exists(PDO $pdo, string $table, string $col): bool {
+  static $cache = [];
+  $k = $table . '.' . $col;
+  if (array_key_exists($k, $cache)) return $cache[$k];
+  try {
+    $st = $pdo->prepare("SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = :t AND COLUMN_NAME = :c LIMIT 1");
+    $st->execute([':t'=>$table, ':c'=>$col]);
+    $cache[$k] = (bool)$st->fetch(PDO::FETCH_ASSOC);
+  } catch (Throwable $e) { $cache[$k] = false; }
   return $cache[$k];
 }
 
-function update_flexible(PDO $pdo, string $table, int $id, array $data): void {
-  $sets = [];
-  $params = [':id'=>$id];
+function update_flexible(PDO $pdo, string $table, array $data, string $whereSql, array $whereParams): int {
+  $set = [];
+  $params = [];
   foreach ($data as $k=>$v) {
     if (!col_exists($pdo, $table, $k)) continue;
-    $sets[] = "`$k`=:$k";
+    $set[] = "`$k` = :$k";
     $params[":$k"] = $v;
   }
-  if (!$sets) return;
-  $sql = "UPDATE `$table` SET ".implode(',',$sets)." WHERE id=:id";
+  if (empty($set)) return 0;
+  $sql = "UPDATE `$table` SET " . implode(',', $set) . " WHERE " . $whereSql;
   $st = $pdo->prepare($sql);
-  $st->execute($params);
+  $st->execute(array_merge($params, $whereParams));
+  return $st->rowCount();
 }
 
-$raw = file_get_contents('php://input') ?: '';
-$payload = json_decode($raw, true);
-if (!is_array($payload)) json_out(['ok'=>false,'error'=>'invalid_json'], 400);
-
-$leadId = (int)($payload['lead_id'] ?? 0);
-$eventId = trim((string)($payload['event_id'] ?? ''));
-
-$name  = trim((string)($payload['name'] ?? ''));
-$email = trim((string)($payload['email'] ?? ''));
-$phone = trim((string)($payload['phone'] ?? ''));
-$serviceType = trim((string)($payload['service_type'] ?? ''));
-
-$meta = [
-  'fbp' => (string)($payload['fbp'] ?? ''),
-  'fbc' => (string)($payload['fbc'] ?? ''),
-  'fbclid' => (string)($payload['fbclid'] ?? ''),
-  'page_url' => (string)($payload['page_url'] ?? ''),
-];
-
-$digits = bc_normalize_ie_phone($phone);
-if ($digits !== '') $phone = '+' . $digits;
-
-if ($leadId > 0) {
-  update_flexible($pdo, 'bc_leads', $leadId, [
-    'went_whatsapp' => 1,
-    'went_whatsapp_at' => date('Y-m-d H:i:s'),
-    'contact_event_id' => $eventId,
-    'name' => $name,
-    'email' => $email,
-    'phone' => $phone,
-    'service_type' => $serviceType,
-    'fbp' => $meta['fbp'],
-    'fbc' => $meta['fbc'],
-    'fbclid' => $meta['fbclid'],
-    'page_url' => $meta['page_url'],
-    'user_agent' => (string)($_SERVER['HTTP_USER_AGENT'] ?? ''),
-    'ip_address' => (string)($_SERVER['REMOTE_ADDR'] ?? ''),
-  ]);
+function safe_str($v): string {
+  return trim((string)($v ?? ''));
 }
 
-/**
- * CAPI Contact — SEM value
- */
-$res = bc_send_capi_event($pdo, [
-  'event_name' => 'Contact',
-  'event_id' => $eventId ?: ('contact_'.$leadId),
-  'event_time' => time(),
-  'action_source' => 'website',
-  'event_source_url' => $meta['page_url'],
-  'user' => [
-    'name'=>$name,
-    'email'=>$email,
-    'phone'=>$phone,
-    'fbp'=>$meta['fbp'],
-    'fbc'=>$meta['fbc'],
-    'client_ip'=>(string)($_SERVER['REMOTE_ADDR'] ?? ''),
-    'client_ua'=>(string)($_SERVER['HTTP_USER_AGENT'] ?? ''),
-  ],
-  'custom' => [
-    'currency' => 'EUR',
-    'lead_id' => $leadId,
-    'service_type' => $serviceType,
-    // 🚫 sem value
-  ],
-]);
+try {
+  if ($_SERVER['REQUEST_METHOD'] !== 'POST') json_out(['ok'=>false,'error'=>'method_not_allowed'], 405);
 
-json_out(['ok'=>true,'capi_ok'=> (bool)($res['ok'] ?? false)]);
+  $payload = read_payload();
+  if (empty($payload)) json_out(['ok'=>false,'error'=>'empty_payload'], 400);
+
+  $leadId = (int)($payload['lead_id'] ?? 0);
+
+  $name = safe_str($payload['name'] ?? '');
+  $email = safe_str($payload['email'] ?? '');
+  $phoneRaw = safe_str($payload['phone_digits'] ?? ($payload['phone'] ?? ''));
+  $serviceType = safe_str($payload['service_type'] ?? '');
+
+  // Address (optional)
+  $eircode = safe_str($payload['eircode'] ?? '');
+  $city = safe_str($payload['city'] ?? '');
+  $county = safe_str($payload['county'] ?? '');
+
+  $eventId = safe_str($payload['event_id'] ?? '');
+  $fbp = safe_str($payload['fbp'] ?? '');
+  $fbc = safe_str($payload['fbc'] ?? '');
+  $pageUrl = safe_str($payload['page_url'] ?? '');
+  $testCode = safe_str($payload['test_event_code'] ?? '');
+
+  if ($name === '' || $email === '' || $phoneRaw === '') {
+    json_out(['ok'=>false,'error'=>'missing_required_fields'], 422);
+  }
+
+  $phoneDigits = bc_normalize_ie_phone($phoneRaw) ?? preg_replace('/\D+/', '', $phoneRaw);
+  if ($phoneDigits === '' || strlen($phoneDigits) < 8) {
+    json_out(['ok'=>false,'error'=>'invalid_phone'], 422);
+  }
+
+  // Update lead row if we have an ID
+  if ($leadId > 0) {
+    $update = [
+      'stage' => 'contact',
+      'went_whatsapp' => 1,
+      'contact_at' => date('Y-m-d H:i:s'),
+      'contact_event_id' => $eventId,
+
+      // keep lead info updated
+      'name' => $name,
+      'email' => $email,
+      'phone' => '+' . $phoneDigits,
+      'phone_digits' => $phoneDigits,
+      'service_type' => $serviceType,
+
+      'fbp' => $fbp,
+      'fbc' => $fbc,
+
+      // address
+      'eircode' => $eircode,
+      'city' => $city,
+      'county' => $county,
+    ];
+    update_flexible($pdo, 'bc_leads', $update, "id = :id", [':id'=>$leadId]);
+  }
+
+  // CAPI: Contact
+  $evt = [
+    'event_name' => 'Contact',
+    'event_time' => time(),
+    'event_id' => $eventId,
+    'event_source_url' => $pageUrl,
+    'action_source' => 'website',
+    'test_event_code' => $testCode,
+    'user' => [
+      'email' => $email,
+      'phone_digits' => $phoneDigits,
+      'name' => $name,
+      'fbp' => $fbp,
+      'fbc' => $fbc,
+      'external_id' => ($leadId > 0 ? ('lead:' . $leadId) : ''),
+      'zip' => $eircode,
+      'city' => $city,
+      'county' => $county,
+      'country' => 'ie',
+    ],
+    'custom' => [
+      'currency' => 'EUR',
+      'value' => 1.0,
+      'content_name' => 'WhatsApp Click',
+      'content_category' => 'cleaning',
+      'service_type' => $serviceType,
+      'lead_id' => $leadId,
+    ],
+  ];
+
+  $capi = bc_send_capi_event($pdo, $evt);
+
+  json_out(['ok'=>true, 'lead_id'=>$leadId, 'capi'=>$capi]);
+
+} catch (Throwable $e) {
+  bc_capi_log('error', 'contact-endpoint fatal', ['err'=>$e->getMessage()]);
+  json_out(['ok'=>false,'error'=>'server_error'], 500);
+}
