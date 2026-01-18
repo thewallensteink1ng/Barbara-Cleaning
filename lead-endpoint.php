@@ -1,14 +1,17 @@
 <?php
 declare(strict_types=1);
 
+/**
+ * Eircode Lookup – (Optional) address autofill helper.
+ * File: /dashboard/eircode-lookup.php
+ *
+ * IMPORTANT:
+ * - There is no official free public Eircode -> full address API.
+ * - This file is built to support a provider (ex: Postcoder / getAddress.io).
+ * - If no API key is configured, it returns ok=false so the form can show manual address fields.
+ */
+
 header('Content-Type: application/json; charset=utf-8');
-
-$dbcfg = __DIR__ . '/_private/db-config.php';
-if (!is_file($dbcfg)) $dbcfg = __DIR__ . '/db-config.php';
-require_once $dbcfg;
-require_once __DIR__ . '/lib/bc-capi.php';
-
-global $pdo;
 
 function json_out(array $a, int $code=200): void {
   http_response_code($code);
@@ -16,129 +19,127 @@ function json_out(array $a, int $code=200): void {
   exit;
 }
 
-function col_exists(PDO $pdo, string $table, string $col): bool {
-  static $cache = [];
-  $k = $table.'.'.$col;
-  if (isset($cache[$k])) return $cache[$k];
-  try {
-    // Prefer INFORMATION_SCHEMA (reliable on Hostinger/MariaDB)
-    $st = $pdo->prepare("\n      SELECT 1\n      FROM INFORMATION_SCHEMA.COLUMNS\n      WHERE TABLE_SCHEMA = DATABASE()\n        AND TABLE_NAME = :t\n        AND COLUMN_NAME = :c\n      LIMIT 1\n    ");
-    $st->execute([':t' => $table, ':c' => $col]);
-    $cache[$k] = (bool)$st->fetchColumn();
-  } catch (Throwable $e) {
-    // Fallback (avoid prepared statements for SHOW COLUMNS)
-    if (preg_match('/^[A-Za-z0-9_]+$/', $table) && preg_match('/^[A-Za-z0-9_]+$/', $col)) {
-      try {
-        $sql = "SHOW COLUMNS FROM `{$table}` LIKE " . $pdo->quote($col);
-        $r = $pdo->query($sql);
-        $cache[$k] = (bool)$r->fetch(PDO::FETCH_ASSOC);
-      } catch (Throwable $e2) {
-        $cache[$k] = false;
-      }
-    } else {
-      $cache[$k] = false;
+function get_cfg(): array {
+  // Optional: keep secrets in /dashboard/_private/admin-config.php
+  $cfg = [];
+  $path = __DIR__ . '/_private/admin-config.php';
+  if (is_file($path)) {
+    $x = require $path;
+    if (is_array($x)) $cfg = $x;
+  }
+  return $cfg;
+}
+
+function eircode_normalize(string $v): string {
+  $v = strtoupper(trim($v));
+  $v = preg_replace('/\s+/', '', $v);
+  return $v;
+}
+
+// Eircode format: 7 chars (Routing Key + Unique Identifier) e.g. D02X285 or A65F4E2
+function is_valid_eircode(string $v): bool {
+  $v = eircode_normalize($v);
+  return (bool)preg_match('/^(?:[AC-FHKNPRTV-Y]\d{2}|D6W)[0-9AC-FHKNPRTV-Y]{4}$/i', $v);
+}
+
+function http_get_json(string $url, int $timeout=7): array {
+  if (function_exists('curl_init')) {
+    $ch = curl_init($url);
+    curl_setopt_array($ch, [
+      CURLOPT_RETURNTRANSFER => true,
+      CURLOPT_CONNECTTIMEOUT => $timeout,
+      CURLOPT_TIMEOUT => $timeout,
+      CURLOPT_HTTPHEADER => ['Accept: application/json'],
+    ]);
+    $body = (string)curl_exec($ch);
+    $err  = curl_error($ch);
+    $code = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+
+    if ($err !== '' || $code < 200 || $code >= 300) {
+      return ['ok'=>false,'status'=>$code,'error'=>$err,'body'=>$body];
+    }
+
+    $j = json_decode($body, true);
+    return ['ok'=>is_array($j), 'status'=>$code, 'json'=>$j, 'body'=>$body];
+  }
+
+  $ctx = stream_context_create([
+    'http' => [
+      'method' => 'GET',
+      'header' => "Accept: application/json\r\n",
+      'timeout' => $timeout,
+    ]
+  ]);
+  $body = @file_get_contents($url, false, $ctx);
+  $code = 0;
+  if (isset($http_response_header) && is_array($http_response_header)) {
+    foreach ($http_response_header as $h) {
+      if (preg_match('#HTTP/\S+\s+(\d{3})#', $h, $m)) { $code = (int)$m[1]; break; }
     }
   }
-  return $cache[$k];
-}
-
-function insert_flexible(PDO $pdo, string $table, array $data): int {
-  $cols = [];
-  $vals = [];
-  $params = [];
-  foreach ($data as $k=>$v) {
-    if (!col_exists($pdo, $table, $k)) continue;
-    $cols[] = "`$k`";
-    $vals[] = ":$k";
-    $params[":$k"] = $v;
+  if ($body === false || $code < 200 || $code >= 300) {
+    return ['ok'=>false,'status'=>$code,'error'=>($body===false?'file_get_contents_failed':''),'body'=>(string)($body?:'')];
   }
-  if (!$cols) return 0;
-  $sql = "INSERT INTO `$table` (".implode(',',$cols).") VALUES (".implode(',',$vals).")";
-  $st = $pdo->prepare($sql);
-  $st->execute($params);
-  return (int)$pdo->lastInsertId();
+  $j = json_decode((string)$body, true);
+  return ['ok'=>is_array($j), 'status'=>$code, 'json'=>$j, 'body'=>(string)$body];
 }
 
-$raw = file_get_contents('php://input') ?: '';
-$payload = json_decode($raw, true);
-if (!is_array($payload)) json_out(['ok'=>false,'error'=>'invalid_json'], 400);
+try {
+  $eircode = (string)($_GET['eircode'] ?? '');
+  $eircode = eircode_normalize($eircode);
 
-$data = $payload['data'] ?? [];
-$meta = $payload['meta'] ?? [];
-$eventId = trim((string)($payload['event_id'] ?? ''));
+  if ($eircode === '') json_out(['ok'=>false,'error'=>'missing_eircode'], 400);
+  if (!is_valid_eircode($eircode)) json_out(['ok'=>false,'error'=>'invalid_eircode'], 422);
 
-$name  = trim((string)($data['name'] ?? ''));
-$email = trim((string)($data['email'] ?? ''));
-$phone = trim((string)($data['phone'] ?? ''));
+  $cfg = get_cfg();
 
-if ($name === '' || $email === '' || $phone === '') {
-  json_out(['ok'=>false,'error'=>'missing_required_fields'], 400);
+  /**
+   * Provider: Postcoder (Capita) – supports Irish Eircode lookup with API key.
+   * Configure:
+   * - create /dashboard/_private/admin-config.php and return ['postcoder_api_key' => 'YOUR_KEY']
+   *
+   * Docs mention:
+   * https://ws.postcoder.com/pcw/{apikey}/address/ie/{eircode}?format=json
+   */
+  $key = (string)($cfg['postcoder_api_key'] ?? '');
+  $key = trim($key);
+
+  if ($key === '') {
+    json_out([
+      'ok'=>false,
+      'error'=>'no_provider_configured',
+      'message'=>'No address lookup API key configured. Form should show manual address fields.'
+    ], 200);
+  }
+
+  $url = 'https://ws.postcoder.com/pcw/' . rawurlencode($key) . '/address/ie/' . rawurlencode($eircode) . '?format=json';
+  $res = http_get_json($url, 8);
+
+  if (!$res['ok'] || empty($res['json']) || !is_array($res['json'])) {
+    json_out(['ok'=>false,'error'=>'lookup_failed','status'=>$res['status'] ?? 0], 200);
+  }
+
+  // Postcoder returns an array of matches
+  $first = $res['json'][0] ?? null;
+  if (!is_array($first)) json_out(['ok'=>false,'error'=>'no_results'], 200);
+
+  // Best-effort mapping (provider-dependent)
+  $line1 = (string)($first['addressline1'] ?? ($first['summaryline'] ?? ''));
+  $line2 = (string)($first['addressline2'] ?? '');
+  $city  = (string)($first['posttown'] ?? ($first['city'] ?? ''));
+  $county = (string)($first['county'] ?? '');
+
+  json_out([
+    'ok'=>true,
+    'eircode'=>$eircode,
+    'address_line1'=>trim($line1),
+    'address_line2'=>trim($line2),
+    'city'=>trim($city),
+    'county'=>trim($county),
+    'raw'=>$first, // useful for debugging; remove if you prefer
+  ], 200);
+
+} catch (Throwable $e) {
+  json_out(['ok'=>false,'error'=>'server_error'], 500);
 }
-
-$digits = bc_normalize_ie_phone($phone);
-if ($digits !== '') $phone = '+' . $digits;
-
-$row = [
-  'name' => $name,
-  'email' => $email,
-  'phone' => $phone,
-  'service_type' => (string)($data['service_type'] ?? ''),
-  'bedrooms' => (string)($data['bedrooms'] ?? ''),
-  'bathrooms' => (string)($data['bathrooms'] ?? ''),
-  'country' => (string)($data['country'] ?? 'IE'),
-  'created_at' => date('Y-m-d H:i:s'),
-
-  'page_url' => (string)($meta['page_url'] ?? ''),
-  'referrer' => (string)($meta['referrer'] ?? ''),
-  'user_agent' => (string)($meta['user_agent'] ?? ($_SERVER['HTTP_USER_AGENT'] ?? '')),
-  'ip_address' => (string)($_SERVER['REMOTE_ADDR'] ?? ''),
-  'language' => (string)($meta['language'] ?? ''),
-  'timezone_offset' => (string)($meta['timezone_offset'] ?? ''),
-  'screen_width' => (string)($meta['screen_width'] ?? ''),
-  'screen_height' => (string)($meta['screen_height'] ?? ''),
-
-  'fbclid' => (string)($meta['fbclid'] ?? ''),
-  'fbp' => (string)($meta['fbp'] ?? ''),
-  'fbc' => (string)($meta['fbc'] ?? ''),
-
-  'utm_source' => (string)($meta['utm_source'] ?? ''),
-  'utm_medium' => (string)($meta['utm_medium'] ?? ''),
-  'utm_campaign' => (string)($meta['utm_campaign'] ?? ''),
-  'utm_content' => (string)($meta['utm_content'] ?? ''),
-  'utm_term' => (string)($meta['utm_term'] ?? ''),
-
-  'lead_event_id' => $eventId,
-];
-
-$leadId = insert_flexible($pdo, 'bc_leads', $row);
-if ($leadId <= 0) json_out(['ok'=>false,'error'=>'db_insert_failed'], 500);
-
-/**
- * CAPI Lead — SEM value
- */
-$res = bc_send_capi_event($pdo, [
-  'event_name' => 'Lead',
-  'event_id' => $eventId ?: ('lead_'.$leadId),
-  'event_time' => time(),
-  'action_source' => 'website',
-  'event_source_url' => (string)($meta['page_url'] ?? ''),
-  'user' => [
-    'name'=>$name,
-    'email'=>$email,
-    'phone'=>$phone,
-    'fbp'=>(string)($meta['fbp'] ?? ''),
-    'fbc'=>(string)($meta['fbc'] ?? ''),
-    'client_ip'=>(string)($_SERVER['REMOTE_ADDR'] ?? ''),
-    'client_ua'=>(string)($_SERVER['HTTP_USER_AGENT'] ?? ''),
-  ],
-  'custom' => [
-    'currency' => 'EUR',
-    'lead_id' => $leadId,
-    'service_type' => (string)($data['service_type'] ?? ''),
-    'bedrooms' => (string)($data['bedrooms'] ?? ''),
-    'bathrooms' => (string)($data['bathrooms'] ?? ''),
-    // 🚫 sem value
-  ],
-]);
-
-json_out(['ok'=>true,'id'=>$leadId,'capi_ok'=> (bool)($res['ok'] ?? false)]);
